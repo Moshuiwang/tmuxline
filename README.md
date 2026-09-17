@@ -17,14 +17,14 @@ tz 与 biai 两台机器共用的 tmux 状态栏:Claude Code / Codex 会话状�
 | `claude/tmux-usage-compact.sh` | `~/.claude/` | 窄屏用的紧凑额度段 `C95 F70 X47` |
 | `claude/tmux-claude-age.sh` | `~/.claude/` | 状态持续时长、闪烁开关、残留清理、tmux 运行时长 |
 | `claude/tmux-claude-hook.sh` | `~/.claude/` | Claude Code hooks 调用,写分屏变量 `@claude_state` |
-| `claude/statusline-command.sh` | `~/.claude/` | Claude Code 自己的底部状态行(模型 / 思考深度 / 上下文占比 / 路径) |
+| `claude/statusline-command.sh` | `~/.claude/` | Claude Code 自己的底部状态行(模型 / 思考深度 / 上下文占比 / 路径);显示的主机名可用 `~/.claude/statusline-host`(一行,不入库)固定,如 biai 写 `aws-ie-01` |
 | `claude/settings-hooks.snippet.json` | —(参考) | `~/.claude/settings.json` 里需要的 `hooks` 与 `statusLine` 段,手工合并 |
 | `codex/hooks.json` | `~/.codex/hooks.json` | Codex hooks,调用下面的钩子脚本 |
 | `codex/tmux-codex-hook.sh` | `~/.codex/` | 写分屏变量 `@codex_state` |
 | `codex/tmux-codex-quota-refresh.py` | `~/.codex/` | Codex 额度刷新:用 `~/.codex/auth.json` 的令牌拉官方用量接口(失败退回 app-server 代理),写缓存与 `*-7d.hist`,同算法算 24h 燃速;只用 Python 标准库 |
 | `tests/` | — | `tests/run.sh` 跑全部测试(bash 燃速函数 / 渲染器 / codex 侧 python),不碰真实数据 |
 
-运行期数据(`*.dat` / `*.hist` / `*.state` / `*.last` / `*.lock`)留在 `~/.claude` 与 `~/.local/state/tmux-codex-quota/`,不入库。
+运行期数据(`*.dat` / `*.hist` / `*.state` / `*.last` / `*.lock`)与每台机器自己的 `~/.claude/statusline-host` 留在原位,不入库。
 
 ## 安装
 

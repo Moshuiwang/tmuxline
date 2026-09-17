@@ -17,6 +17,11 @@
 #
 # 任何字段缺失都只是不渲染对应段，不报错、不留空壳。
 
+# 显示的主机名:优先读 ~/.claude/statusline-host(一行,不入库,每台机器自己写;biai 的内部 hostname 会随实例变,
+# 那边固定写 aws-ie-01),没有这个文件就用 hostname -s。
+STATUS_HOST=$(head -n1 "$HOME/.claude/statusline-host" 2>/dev/null)
+STATUS_HOST=${STATUS_HOST:-$(hostname -s)}
+
 input=$(cat)
 get() { printf '%s' "$input" | jq -r "$1" 2>/dev/null; }
 
@@ -67,7 +72,7 @@ fi
 # JSON 不提供 git 分支，必须自己跑；--no-optional-locks 避免碰 index.lock 干扰并发的 git 操作。
 cwd=$(get '.workspace.current_dir // .cwd // empty')
 [ -z "$cwd" ] && cwd="$PWD"
-line2="${GREEN}$(whoami)@$(hostname -s)${RESET}:${BLUE}${cwd/#$HOME/\~}${RESET}"
+line2="${GREEN}$(whoami)@${STATUS_HOST}${RESET}:${BLUE}${cwd/#$HOME/\~}${RESET}"
 if git -C "$cwd" --no-optional-locks rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   branch=$(git -C "$cwd" --no-optional-locks branch --show-current 2>/dev/null)
   [ -z "$branch" ] && branch=$(git -C "$cwd" --no-optional-locks rev-parse --short HEAD 2>/dev/null)
