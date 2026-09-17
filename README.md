@@ -21,7 +21,7 @@ tz 与 biai 两台机器共用的 tmux 状态栏:Claude Code / Codex 会话状�
 | `claude/settings-hooks.snippet.json` | —(参考) | `~/.claude/settings.json` 里需要的 `hooks` 与 `statusLine` 段,手工合并 |
 | `codex/hooks.json` | `~/.codex/hooks.json` | Codex hooks,调用下面的钩子脚本 |
 | `codex/tmux-codex-hook.sh` | `~/.codex/` | 写分屏变量 `@codex_state` |
-| `codex/tmux-codex-quota-refresh.py` | `~/.codex/` | Codex 额度刷新:写缓存与 `*-7d.hist`,同算法算 24h 燃速 |
+| `codex/tmux-codex-quota-refresh.py` | `~/.codex/` | Codex 额度刷新:用 `~/.codex/auth.json` 的令牌拉官方用量接口(失败退回 app-server 代理),写缓存与 `*-7d.hist`,同算法算 24h 燃速;只用 Python 标准库 |
 | `tests/` | — | `tests/run.sh` 跑全部测试(bash 燃速函数 / 渲染器 / codex 侧 python),不碰真实数据 |
 
 运行期数据(`*.dat` / `*.hist` / `*.state` / `*.last` / `*.lock`)留在 `~/.claude` 与 `~/.local/state/tmux-codex-quota/`,不入库。
@@ -36,8 +36,7 @@ git clone https://github.com/Moshuiwang/tmuxline ~/project/tmuxline
 
 另需:
 - `~/.claude/settings.json` 合并 `claude/settings-hooks.snippet.json` 的 `hooks` 与 `statusLine` 段;
-- Codex 额度刷新依赖本机 `~/ai-usage-widget`(`ai_usage_widget.codex_limits_provider`),不在本仓库内;
-- `jq`、`curl`、`flock`、Python 3.12+(`tmux-claude-age.sh` 等只用 bash)。
+- `jq`、`curl`、`flock`、Python 3.12+(`tmux-claude-age.sh` 等只用 bash);仓库外没有其他依赖(2026-09-17 起 Codex 刷新不再引用本机 `~/ai-usage-widget`)。
 
 ## 额度预测规则(2026-09-17 起)
 

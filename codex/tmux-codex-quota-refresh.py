@@ -1,30 +1,41 @@
 #!/usr/bin/env python3
 """Fetch Codex account limits and write a tiny tmux-friendly cache.
 
-This helper deliberately does not start a Codex model run.  It first uses the
-existing local WHAM provider and only falls back to the app-server proxy when
-the provider is unavailable.  The hook wrapper is responsible for locking
-and detaching this process from Codex.
+This helper deliberately does not start a Codex model run.  It first asks the
+WHAM usage endpoint with the local OAuth token and only falls back to the
+app-server proxy when that is unavailable.  The hook wrapper is responsible
+for locking and detaching this process from Codex.
+
+2026-09-17: 拉取与解析逻辑内联在本文件(原来 import 本机 ~/ai-usage-widget 的
+ai_usage_widget.codex_limits_provider),仓库自足,不再依赖仓库外目录;路径也不再写死用户名。
+只用标准库。
 """
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 
-CODEX_DIR = Path("/home/wangzp/.codex")
-STATE_DIR = Path(os.environ.get("TMUX_CODEX_STATE_DIR", "/home/wangzp/.local/state/tmux-codex-quota"))
+CODEX_DIR = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+STATE_DIR = Path(os.environ.get("TMUX_CODEX_STATE_DIR", str(Path.home() / ".local/state/tmux-codex-quota")))
 AUTH_FILE = CODEX_DIR / "auth.json"
 RPC_SOCKET = CODEX_DIR / "app-server-control" / "app-server-control.sock"
-WIDGET_ROOT = Path("/home/wangzp/ai-usage-widget")
 CACHE_FILE = STATE_DIR / "tmux-codex-usage.dat"
 HISTORY_FILE = STATE_DIR / "tmux-codex-usage-5h.hist"
 WEEK_HISTORY_FILE = STATE_DIR / "tmux-codex-usage-7d.hist"
+
+WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+RPC_REQUEST_ID = "tmux-codex-quota-rate-limits"
+FETCH_TIMEOUT = 8.0
 
 # 周燃速参数,与 ~/.claude/tmux-claude-usage-rate.sh 同算法(2026-09-17):
 # 缓存末尾多两列「24h 燃速(%/周) 上周终值%」,渲染器据此在周初与冲刺当天也能给出预测。
@@ -33,13 +44,159 @@ RATE24_WIN = 86400
 RATE24_MIN_SPAN = 21600
 WEEK_HISTORY_KEEP = 2500
 
-sys.path.insert(0, str(WIDGET_ROOT))
 
-from ai_usage_widget.codex_limits_provider import (  # noqa: E402
-    CodexAppServerRPCProvider,
-    CodexWhamProvider,
-)
+class ProviderError(RuntimeError):
+    """Any failure between us and a usable limit window; the message never carries secrets."""
 
+
+class Window:
+    """一个额度窗口。不用 dataclass:测试用 spec_from_file_location 加载本文件时 dataclass 会因模块未注册而崩。"""
+
+    __slots__ = ("window", "used_percent", "reset_at", "window_duration_minutes")
+
+    def __init__(self, window: str, used_percent: float, reset_at: str, window_duration_minutes: int) -> None:
+        self.window = window                    # "session" / "week"(接口字段名映射,_pick_window 只当兜底用)
+        self.used_percent = used_percent
+        self.reset_at = reset_at                # ISO 8601
+        self.window_duration_minutes = window_duration_minutes  # 0 = 接口没给
+
+    def __repr__(self) -> str:
+        return f"Window({self.window!r}, {self.used_percent}, {self.reset_at!r}, {self.window_duration_minutes})"
+
+
+# ---- 拉取 ---------------------------------------------------------------
+
+def _load_access_token(auth_file: Path) -> str:
+    try:
+        payload = json.loads(auth_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProviderError("auth file unreadable") from exc
+    for path in (("tokens", "access_token"), ("oauth", "access_token"), ("access_token",), ("token", "access_token")):
+        current = payload
+        for key in path:
+            current = current.get(key) if isinstance(current, dict) else None
+        if isinstance(current, str) and current.strip():
+            return current.strip()
+    raise ProviderError("no access token in auth file")
+
+
+def _fetch_wham(auth_file: Path, timeout: float) -> list[Window]:
+    token = _load_access_token(auth_file)
+    request = urllib.request.Request(
+        WHAM_USAGE_URL,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            status, payload = int(response.status), json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        status, payload = int(exc.code), {}
+    except Exception as exc:
+        raise ProviderError(f"WHAM request failed: {exc.__class__.__name__}") from exc
+    if status != 200:
+        raise ProviderError(f"WHAM HTTP {status}")
+    if not isinstance(payload, dict):
+        raise ProviderError("WHAM payload is not an object")
+    inner = payload.get("rate_limit")
+    return _parse_windows(inner if isinstance(inner, dict) else payload,
+                          (("primary_window", "session"), ("secondary_window", "week")))
+
+
+def _fetch_rpc(socket_path: Path, timeout: float) -> list[Window]:
+    command = ["codex", "app-server", "proxy", "--sock", str(socket_path)]
+    request = {"id": RPC_REQUEST_ID, "method": "account/rateLimits/read", "params": None}
+    try:
+        result = subprocess.run(command, input=json.dumps(request) + "\n", text=True,
+                                capture_output=True, timeout=timeout, check=False)
+    except Exception as exc:
+        raise ProviderError(f"app-server proxy failed: {exc.__class__.__name__}") from exc
+    if result.returncode != 0:
+        raise ProviderError("app-server proxy exited non-zero")
+    payload = _parse_rpc_stdout(result.stdout)
+    if "error" in payload:
+        raise ProviderError("app-server RPC returned an error")
+    result_obj = payload.get("result")
+    if result_obj is not None:
+        payload = result_obj
+    if not isinstance(payload, dict):
+        raise ProviderError("RPC result is not an object")
+    limits = payload.get("rate_limits", payload.get("rateLimits"))
+    if not isinstance(limits, dict):
+        raise ProviderError("RPC result has no rate_limits")
+    return _parse_windows(limits, (("primary", "session"), ("secondary", "week")))
+
+
+def _parse_rpc_stdout(stdout: str) -> dict:
+    text = stdout.strip()
+    if not text:
+        raise ProviderError("app-server RPC returned empty output")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        for line in text.splitlines():
+            try:
+                payload = json.loads(line.strip())
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and payload.get("id") == RPC_REQUEST_ID:
+                return payload
+        raise ProviderError("app-server RPC returned invalid JSON")
+    if not isinstance(payload, dict):
+        raise ProviderError("app-server RPC response is not an object")
+    return payload
+
+
+# ---- 解析 ---------------------------------------------------------------
+
+def _parse_windows(payload: dict, fields: tuple[tuple[str, str], ...]) -> list[Window]:
+    windows: list[Window] = []
+    for field, name in fields:
+        value = payload.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, dict):
+            raise ProviderError(f"{field} is not an object")
+        windows.append(_parse_window(value, name))
+    if not windows:
+        raise ProviderError("response contains no limit windows")
+    return windows
+
+
+def _parse_window(payload: dict, name: str) -> Window:
+    used = _first(payload, "used_percent", "usedPercent")
+    if isinstance(used, bool) or not isinstance(used, (int, float)):
+        raise ProviderError("used_percent is not a number")
+    reset = _first(payload, "reset_at", "resets_at", "resetsAt")
+    if isinstance(reset, bool):
+        raise ProviderError("reset_at is not a datetime")
+    if isinstance(reset, (int, float)):
+        reset = datetime.fromtimestamp(float(reset), timezone.utc).isoformat()
+    elif not isinstance(reset, str) or not reset.strip():
+        raise ProviderError("reset_at is not a datetime")
+    # 窗口时长缺失不算错(_pick_window 会退回按字段名判断),只有给了却不是数才算错。
+    if "limit_window_seconds" in payload:
+        seconds = payload["limit_window_seconds"]
+        duration = int(seconds) // 60 if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else 0
+    else:
+        minutes = _first(payload, "window_duration_minutes", "windowDurationMins", default=0)
+        duration = int(minutes) if isinstance(minutes, (int, float)) and not isinstance(minutes, bool) else 0
+    return Window(window=name, used_percent=float(used), reset_at=reset.strip(), window_duration_minutes=duration)
+
+
+_MISSING = object()
+
+
+def _first(payload: dict, *names: str, default=_MISSING):
+    for key in names:
+        if key in payload:
+            return payload[key]
+    if default is _MISSING:
+        raise ProviderError("missing field: " + "/".join(names))
+    return default
+
+
+# ---- 主流程 -------------------------------------------------------------
 
 def main() -> int:
     windows, errors = _collect_windows()
@@ -77,16 +234,13 @@ def _collect_windows():
     errors: list[str] = []
 
     try:
-        return CodexWhamProvider(auth_file=str(AUTH_FILE), timeout=8.0).collect(), errors
+        return _fetch_wham(AUTH_FILE, FETCH_TIMEOUT), errors
     except Exception as exc:  # provider failures must not break Codex hooks
         errors.append(f"wham:{exc.__class__.__name__}")
 
     if RPC_SOCKET.exists():
         try:
-            return (
-                CodexAppServerRPCProvider(socket_path=str(RPC_SOCKET), timeout=8.0).collect(),
-                errors,
-            )
+            return _fetch_rpc(RPC_SOCKET, FETCH_TIMEOUT), errors
         except Exception as exc:
             errors.append(f"rpc:{exc.__class__.__name__}")
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""codex/tmux-codex-quota-refresh.py 的周燃速函数测试:与 tests/test_rate.sh 同一组情形。"""
+"""codex/tmux-codex-quota-refresh.py 的周燃速函数测试(与 tests/test_rate.sh 同一组情形)+ 内联拉取/解析层测试(不联网)。"""
 import importlib.util, os, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -34,4 +34,35 @@ for k in range(5):
     m._append_week_history(WS + k * 300, str(k), str(R))
 hist = m._append_week_history(WS + 5 * 300, "-", "-")
 chk([x[1] for x in hist], [2, 3, 4], "历史文件只留 KEEP 行且缺失不追加")
+
+# ---- 内联的拉取/解析层(2026-09-17 起不再依赖 ~/ai-usage-widget) ----
+import json
+def summary(ws): return [(w.window, int(w.used_percent), w.reset_at, w.window_duration_minutes) for w in ws]
+wham = {"rate_limit": {"primary_window": {"used_percent": 12.7, "reset_at": "2026-09-17T12:00:00Z", "limit_window_seconds": 18000},
+                       "secondary_window": {"used_percent": 55, "resets_at": 1789816245, "window_duration_minutes": 10080}}}
+chk(summary(m._parse_windows(wham["rate_limit"], (("primary_window", "session"), ("secondary_window", "week")))),
+    [("session", 12, "2026-09-17T12:00:00Z", 300), ("week", 55, "2026-09-19T11:10:45+00:00", 10080)], "WHAM 两窗口(秒时长 / 数字重置)")
+chk(summary(m._parse_windows({"secondary_window": {"usedPercent": 3, "resetsAt": "2026-09-20T00:00:00+08:00"}},
+                             (("primary_window", "session"), ("secondary_window", "week")))),
+    [("week", 3, "2026-09-20T00:00:00+08:00", 0)], "只有周窗口 + 驼峰字段 + 缺时长")
+for bad, name in (({}, "空对象"), ({"primary_window": 1}, "窗口不是对象"),
+                  ({"primary_window": {"used_percent": "x", "reset_at": "2026-09-17T12:00:00Z"}}, "用量不是数"),
+                  ({"primary_window": {"used_percent": 1}}, "缺重置时刻")):
+    try: m._parse_windows(bad, (("primary_window", "session"),)); got = "no error"
+    except m.ProviderError: got = "ProviderError"
+    chk(got, "ProviderError", "解析拒绝:" + name)
+rpc_line = json.dumps({"id": m.RPC_REQUEST_ID, "result": {"rate_limits": {"primary": {"usedPercent": 40, "resetsAt": "2026-09-17T12:00:00Z", "windowDurationMins": 300}}}})
+chk(m._parse_rpc_stdout('{"id":"other","result":{}}\n' + rpc_line + "\n")["id"], m.RPC_REQUEST_ID, "RPC 多行输出挑本请求的那行")
+try: m._parse_rpc_stdout("   "); got = "no error"
+except m.ProviderError: got = "ProviderError"
+chk(got, "ProviderError", "RPC 空输出")
+auth = os.path.join(work, "auth.json")
+open(auth, "w").write(json.dumps({"tokens": {"access_token": " tok-1 "}}))
+chk(m._load_access_token(m.Path(auth)), "tok-1", "auth.json tokens.access_token")
+open(auth, "w").write(json.dumps({"access_token": "tok-2"}))
+chk(m._load_access_token(m.Path(auth)), "tok-2", "auth.json 顶层 access_token")
+try: m._load_access_token(m.Path(work, "missing.json")); got = "no error"
+except m.ProviderError: got = "ProviderError"
+chk(got, "ProviderError", "auth.json 缺失")
+chk("wangzp" in open(os.path.join(ROOT, "codex", "tmux-codex-quota-refresh.py")).read().split('"""', 2)[2], False, "脚本正文不写死用户名")
 sys.exit(fail)
