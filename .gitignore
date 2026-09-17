@@ -1,0 +1,9 @@
+# 运行期数据(采样 / 状态 / 锁),只存在于 ~/.claude 与 ~/.local/state,不入库
+*.dat
+*.hist
+*.state
+*.last
+*.lock
+*.tmp
+*.bak*
+__pycache__/
