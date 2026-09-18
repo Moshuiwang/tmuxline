@@ -85,7 +85,7 @@ for line in "${rows[@]}"; do
     cmds+=(set-option -p -t "$pane" -u @claude_state ';'); cst=""
   fi
   if [ -n "$kst" ] && [ "$need_sweep" = 1 ] && [ -z "${live[$ppid/codex]}" ]; then
-    cmds+=(set-option -p -t "$pane" -u @codex_state ';' set-option -p -t "$pane" -u @codex_pending ';'); kst=""
+    cmds+=(set-option -p -t "$pane" -u @codex_state ';' set-option -p -t "$pane" -u @codex_pending ';' set-option -p -t "$pane" -u @codex_busy ';'); kst=""
   fi
   plan "$pane" claude "$cst" "$csince" "$cage"
   plan "$pane" codex  "$kst" "$ksince" "$kage"

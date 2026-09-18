@@ -3,31 +3,39 @@
 # @codex_state 变量。窗口标签会把它渲染成彩色菱形(见 ~/.tmux.conf)：
 #   busy     = 青色(工作中)     ← UserPromptSubmit
 #   wait-now = 黄色(回合完成)   ← Stop
-#   clear    = (已停用,见下)  ← SessionEnd
+#   clear    = 线程退出         ← SessionEnd(只把该线程从「在忙」集合里去掉,不清分屏)
 # 2026-09-14 精简:去掉了 PermissionRequest 的延迟变黄和 Pre/PostToolUse 的撤销逻辑(3 个钩子),
 # 只保留回合开始/结束/退出三处;被 kill、崩溃等 SessionEnd 不触发的残留由
 # ~/.claude/tmux-claude-age.sh 每 2 秒按进程树清理。
 # 同时记录切换时刻 @codex_since(只在状态真正变化时更新,busy→busy 不重置),
 # tmux-claude-age.sh 据此算出「当前状态持续多久」写到 @codex_age,显示在菱形后面。
-# Codex 传入的 hook JSON 不需要，直接丢弃。永远以 0 退出。
+# 永远以 0 退出。
 #
-# 正常情况下 TMUX_PANE 会随 Codex 进程继承。若 Codex 通过后台 app-server
-# 执行 hook，可能没有这两个环境变量；此时仅在全局恰好只有一个 Codex pane
-# 时回退定位，多于一个就静默退出，避免把状态写到错误的窗口。
+# 2026-09-18 实测(codex 0.155):hooks 由后台 `codex app-server` 守护进程执行,不是分屏里的 TUI 进程——
+# 没有 TMUX_PANE,父链到 1 号进程;事件 JSON 里只有 session_id / turn_id / cwd 等。因此:
+# 1. 定位分屏:TMUX_PANE 有效就用;否则在跑着 codex 的分屏里找 pane_current_path == cwd 的唯一一个;
+#    再不行、全局恰好只有一个 codex 分屏时用它;还不行就静默退出,不往错的窗口写。
+# 2. 同一分屏里可能有多个线程(TUI 的 agents:主线程 + 用 send_message_to_thread 派的独立线程,各有自己的
+#    session_id,但没有父子字段)。派出的线程每轮结束都触发 Stop、归档触发 SessionEnd,主线程明明还在干活,
+#    分屏却被改成「等你」甚至清空。改为按 session_id 记「在忙」集合 @codex_busy:UserPromptSubmit 加入、
+#    Stop / SessionEnd 移除;集合非空 = busy,清空 = wait。派出线程的回合没有 UserPromptSubmit,不会加入。
+#    集合与状态一起由 tmux-claude-age.sh 在 codex 进程退出后清掉。
 #
 # 嵌套运行不算——Claude 在自己的分屏里用 Bash 起 `codex exec`(或 Codex 起另一个 codex),
 # 那个无头进程继承了同一个 TMUX_PANE,会把菱形画到宿主的分屏上。
 # 判定:沿父进程链往上找,第一个 codex 就是调本钩子的进程;它上面若还有 claude/codex,就是嵌套,静默退出。
-# 只读 /proc,不起子进程。与 ~/.claude/tmux-claude-hook.sh 里的 nested() 镜像。
+# 只读 /proc,不起子进程。与 ~/.claude/tmux-claude-hook.sh 里的 nested() 镜像。(app-server 执行时父链无 codex,不受影响)
+#
+# 取证开关:存在 ~/.codex/tmux-codex-hook.debug 时,把每次事件的字段(去掉 prompt / 回复正文)追加进去。
 
 state="${1:-}"
-# 2026-09-18 取证开关:存在 ~/.codex/tmux-codex-hook.debug 时,把每次事件的字段(去掉 prompt / 回复正文)追加到该文件,
-# 用来核实 codex 多线程(agents)下各线程事件如何落到同一分屏;平时没有该文件,输入直接丢弃。
+input="$(cat 2>/dev/null || true)"
+sid=""; cwd=""
+[[ $input =~ \"session_id\":\"([^\"]+)\" ]] && sid=${BASH_REMATCH[1]}
+[[ $input =~ \"cwd\":\"([^\"]+)\" ]] && cwd=${BASH_REMATCH[1]}
 if [ -f "$HOME/.codex/tmux-codex-hook.debug" ] && command -v jq >/dev/null 2>&1; then
   printf '%(%F %T)T %s pane=%s ppid=%s %s\n' -1 "$state" "${TMUX_PANE:-}" "$PPID" \
-    "$(jq -c 'del(.prompt, .last_assistant_message, .transcript_path)' 2>/dev/null)" >> "$HOME/.codex/tmux-codex-hook.debug"
-else
-  cat >/dev/null 2>&1 || true
+    "$(printf '%s' "$input" | jq -c 'del(.prompt, .last_assistant_message, .transcript_path)' 2>/dev/null)" >> "$HOME/.codex/tmux-codex-hook.debug"
 fi
 
 nested() {
@@ -52,9 +60,15 @@ if [ -n "$pane" ]; then
 fi
 
 if [ -z "$pane" ]; then
-  codex_panes="$(tmux list-panes -a -F '#{pane_id}|#{pane_current_command}' 2>/dev/null | awk -F '|' '$2 == "codex" {print $1}')"
-  codex_count="$(printf '%s\n' "$codex_panes" | awk 'NF {n++} END {print n+0}')"
-  [ "$codex_count" -eq 1 ] && pane="$codex_panes"
+  codex_panes="$(tmux list-panes -a -F '#{pane_id}|#{pane_current_command}|#{pane_current_path}' 2>/dev/null | awk -F '|' '$2 == "codex"')"
+  if [ -n "$cwd" ]; then
+    by_cwd="$(printf '%s\n' "$codex_panes" | awk -F '|' -v c="$cwd" '$3 == c {print $1}')"
+    [ "$(printf '%s\n' "$by_cwd" | awk 'NF {n++} END {print n+0}')" -eq 1 ] && pane="$by_cwd"
+  fi
+  if [ -z "$pane" ]; then
+    all="$(printf '%s\n' "$codex_panes" | awk -F '|' 'NF {print $1}')"
+    [ "$(printf '%s\n' "$all" | awk 'NF {n++} END {print n+0}')" -eq 1 ] && pane="$all"
+  fi
 fi
 
 [ -n "$pane" ] || exit 0
@@ -70,11 +84,17 @@ apply_state() {
        set-option -p -t "$pane" @codex_age 0m >/dev/null 2>&1 || true
 }
 
+# 「在忙」集合:空格分隔的 session_id 列表,存在分屏变量 @codex_busy 里
+busy_set="$(tmux display-message -p -t "$pane" '#{@codex_busy}' 2>/dev/null || true)"
+busy_add() { [ -z "$sid" ] && return; case " $busy_set " in *" $sid "*) ;; *) busy_set="${busy_set:+$busy_set }$sid" ;; esac; }
+busy_del() { [ -z "$sid" ] && return; local out="" s; for s in $busy_set; do [ "$s" = "$sid" ] || out="${out:+$out }$s"; done; busy_set=$out; }
+busy_save() { if [ -n "$busy_set" ]; then tmux set-option -p -t "$pane" @codex_busy "$busy_set" >/dev/null 2>&1; else tmux set-option -p -t "$pane" -u @codex_busy >/dev/null 2>&1; fi; }
+
 case "$state" in
-  busy)     apply_state busy ;;
-  wait-now) apply_state wait ;;
-  clear) ;;   # 2026-09-18 起不再清空:codex 开 agents 子线程时,子线程退出也触发 SessionEnd、写到同一分屏,会把主线程
-              # 正在干活的状态抹掉。codex 进程真退出后,~/.claude/tmux-claude-age.sh 每 2 秒按进程树清理即可兜底。
+  busy)     busy_add; busy_save; apply_state busy ;;
+  wait-now) busy_del; busy_save; if [ -n "$busy_set" ]; then apply_state busy; else apply_state wait; fi ;;
+  clear)    busy_del; busy_save   # 线程退出:只把它从集合去掉;集合空了且分屏还显示在忙,才降为「等你」。分屏级清理交给进程树
+            [ -z "$busy_set" ] && [ "$(tmux display-message -p -t "$pane" '#{@codex_state}' 2>/dev/null)" = busy ] && apply_state wait ;;
 esac
 
 exit 0
