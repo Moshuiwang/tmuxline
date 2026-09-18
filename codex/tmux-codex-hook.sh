@@ -3,7 +3,7 @@
 # @codex_state 变量。窗口标签会把它渲染成彩色菱形(见 ~/.tmux.conf)：
 #   busy     = 青色(工作中)     ← UserPromptSubmit
 #   wait-now = 黄色(回合完成)   ← Stop
-#   clear    = 清除标记         ← SessionEnd
+#   clear    = (已停用,见下)  ← SessionEnd
 # 2026-09-14 精简:去掉了 PermissionRequest 的延迟变黄和 Pre/PostToolUse 的撤销逻辑(3 个钩子),
 # 只保留回合开始/结束/退出三处;被 kill、崩溃等 SessionEnd 不触发的残留由
 # ~/.claude/tmux-claude-age.sh 每 2 秒按进程树清理。
@@ -21,7 +21,14 @@
 # 只读 /proc,不起子进程。与 ~/.claude/tmux-claude-hook.sh 里的 nested() 镜像。
 
 state="${1:-}"
-cat >/dev/null 2>&1 || true
+# 2026-09-18 取证开关:存在 ~/.codex/tmux-codex-hook.debug 时,把每次事件的字段(去掉 prompt / 回复正文)追加到该文件,
+# 用来核实 codex 多线程(agents)下各线程事件如何落到同一分屏;平时没有该文件,输入直接丢弃。
+if [ -f "$HOME/.codex/tmux-codex-hook.debug" ] && command -v jq >/dev/null 2>&1; then
+  printf '%(%F %T)T %s pane=%s ppid=%s %s\n' -1 "$state" "${TMUX_PANE:-}" "$PPID" \
+    "$(jq -c 'del(.prompt, .last_assistant_message, .transcript_path)' 2>/dev/null)" >> "$HOME/.codex/tmux-codex-hook.debug"
+else
+  cat >/dev/null 2>&1 || true
+fi
 
 nested() {
   local pid=$PPID comm line found=0
@@ -66,11 +73,8 @@ apply_state() {
 case "$state" in
   busy)     apply_state busy ;;
   wait-now) apply_state wait ;;
-  clear)
-    tmux set-option -p -t "$pane" -u @codex_state \; \
-         set-option -p -t "$pane" -u @codex_since \; \
-         set-option -p -t "$pane" -u @codex_age >/dev/null 2>&1 || true
-    ;;
+  clear) ;;   # 2026-09-18 起不再清空:codex 开 agents 子线程时,子线程退出也触发 SessionEnd、写到同一分屏,会把主线程
+              # 正在干活的状态抹掉。codex 进程真退出后,~/.claude/tmux-claude-age.sh 每 2 秒按进程树清理即可兜底。
 esac
 
 exit 0
