@@ -70,6 +70,8 @@ fi
 
 # tz 追加(2026-09-17):没跑 claude / codex 的分屏,若 shell 下有子进程在跑(如独占 full 门禁),
 # 把最老那个子进程的运行时长写进 @run_age(分钟粒度),标签第 2 行显示 ▶ 时长;没有子进程则清掉。
+# 2026-09-18 修正:「没跑 claude / codex」按进程树判断,不只看状态——否则 hooks 还没写状态的分屏(刚启动、resume 后
+# 没提交、hooks 未批准)会把 claude / codex 进程自己的存活时间当「▶ 运行时长」显示出来,误导。
 declare -A run_child_et
 while read -r pid pp et; do
   cur=${run_child_et[$pp]:-0}; [ "$et" -gt "$cur" ] 2>/dev/null && run_child_et[$pp]=$et
@@ -93,7 +95,7 @@ for line in "${rows[@]}"; do
   else
     cmds+=(set-option -p -t "$pane" -u @codex_sub ';')
   fi
-  if [ -z "$cst$kst" ] && [ -n "${run_child_et[$ppid]:-}" ]; then
+  if [ -z "$cst$kst" ] && [ -z "${live[$ppid/claude]:-}${live[$ppid/codex]:-}" ] && [ -n "${run_child_et[$ppid]:-}" ]; then
     cmds+=(set-option -p -t "$pane" @run_age "$(fmt_run "${run_child_et[$ppid]}")" ';')
   else
     cmds+=(set-option -p -t "$pane" -u @run_age ';')
