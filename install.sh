@@ -16,6 +16,7 @@ MAP=(
   "claude/tmux-claude-usage-rate.sh     $HOME/.claude/tmux-claude-usage-rate.sh"
   "claude/tmux-usage-compact.sh         $HOME/.claude/tmux-usage-compact.sh"
   "claude/tmux-claude-age.sh            $HOME/.claude/tmux-claude-age.sh"
+  "claude/tmux-sysload.sh               $HOME/.claude/tmux-sysload.sh"
   "claude/tmux-claude-hook.sh           $HOME/.claude/tmux-claude-hook.sh"
   "claude/tmux-status-extra.conf        $HOME/.claude/tmux-status-extra.conf"
   "claude/tmux-status-stage-section.conf $HOME/.claude/tmux-status-stage-section.conf"

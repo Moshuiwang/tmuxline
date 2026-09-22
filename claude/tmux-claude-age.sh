@@ -12,8 +12,8 @@
 # 2026-09-13 起顺带清理残留标记:分屏里已经没有 claude / codex 进程(被 kill、崩溃、无头 `claude -p` 跑完)却还挂着状态,
 # 就把它清掉——这些情况 SessionEnd 钩子不会触发。每轮 ps 一次(约 10ms),只对挂着状态的分屏查其进程树。
 # 先 list-panes 再 ps:状态是活着的进程写的,后拍的 ps 快照一定能看到它,不会误清刚启动的会话。
-# 2026-09-15 起顺带算 tmux server 的运行时长(现在 - #{start_time})写进全局 @uptime,状态栏 session 徽标下面显示:
-# 不足 1 小时 `23m`,不足 1 天 `3h 12m`,之后 `3d 4h`;同样只在文字变化时写回。数据从同一次 list-panes 里带出来,不多起进程。
+# (2026-09-15 至 09-22 曾在这里算 tmux server 运行时长写 @uptime;09-22 起徽标下面改显示整机 CPU / 内存,见 tmux-sysload.sh,
+#  这里只顺手清掉残留的 @uptime。)
 # 测试钩子:TMUX_CLAUDE_TMUX 指定 tmux 命令(如 "tmux -L test"),TMUX_CLAUDE_NOW 固定「现在」。
 
 WAIT_WARN=600
@@ -46,13 +46,13 @@ plan() { # $1=分屏 $2=前缀(claude|codex) $3=状态 $4=切换时刻 $5=现有
 # 用 | 分隔(空字段要保留,不能用空白做分隔符);文字里只有 #[fg=…] 和数字,不会含 |
 rows=()
 while IFS= read -r line; do rows+=("$line"); done \
-  < <($T list-panes -a -F '#{pane_id}|#{pane_pid}|#{@claude_state}|#{@claude_since}|#{@claude_age}|#{@codex_state}|#{@codex_since}|#{@codex_age}|#{@blink}|#{start_time}|#{@uptime}' 2>/dev/null)
+  < <($T list-panes -a -F '#{pane_id}|#{pane_pid}|#{@claude_state}|#{@claude_since}|#{@claude_age}|#{@codex_state}|#{@codex_since}|#{@codex_age}|#{@blink}|#{@uptime}' 2>/dev/null)
 
 # 残留清理:哪些分屏的进程树里真有 claude / codex 在跑。只在有分屏挂着状态时才 ps。
 # comm 取自可执行文件名(claude 是原生二进制,codex 也是),最长 15 字符,用前缀匹配。
 declare -A live ppid_of
 need_sweep=0
-for line in "${rows[@]}"; do IFS='|' read -r _ _ cst _ _ kst _ _ _ _ _ <<< "$line"; [ -n "$cst$kst" ] && { need_sweep=1; break; }; done
+for line in "${rows[@]}"; do IFS='|' read -r _ _ cst _ _ kst _ _ _ _ <<< "$line"; [ -n "$cst$kst" ] && { need_sweep=1; break; }; done
 need_sweep=1   # tz 2026-09-17：嵌套 codex（Claude 派的 codex exec）检测需要进程树，每轮都扫
 if [ "$need_sweep" = 1 ]; then
   agents=()
@@ -78,9 +78,9 @@ while read -r pid pp et; do
 done < <(ps -eo pid=,ppid=,etimes= 2>/dev/null)
 fmt_run() { local s=$1; if [ "$s" -ge 3600 ]; then printf '%dh%02dm' $((s/3600)) $((s%3600/60)); elif [ "$s" -ge 60 ]; then printf '%dm' $((s/60)); else printf '<1m'; fi; }
 
-any_busy=0; blink_cur=""; start=""; up_cur=""
+any_busy=0; blink_cur=""; up_cur=""
 for line in "${rows[@]}"; do
-  IFS='|' read -r pane ppid cst csince cage kst ksince kage blink_cur start up_cur <<< "$line"
+  IFS='|' read -r pane ppid cst csince cage kst ksince kage blink_cur up_cur <<< "$line"
   if [ -n "$cst" ] && [ "$need_sweep" = 1 ] && [ -z "${live[$ppid/claude]}" ]; then
     cmds+=(set-option -p -t "$pane" -u @claude_state ';'); cst=""
   fi
@@ -103,13 +103,7 @@ for line in "${rows[@]}"; do
   { [ "$cst" = busy ] || [ "$kst" = busy ]; } && any_busy=1
 done
 
-if [[ $start =~ ^[0-9]+$ ]]; then
-  up=$((now - start)); [ "$up" -lt 0 ] && up=0
-  if   [ "$up" -lt 3600 ];  then up_label="$((up / 60))m"
-  elif [ "$up" -lt 86400 ]; then up_label="$((up / 3600))h $((up % 3600 / 60))m"
-  else                            up_label="$((up / 86400))d $((up % 86400 / 3600))h"; fi
-  [ "$up_label" = "$up_cur" ] || cmds+=(set-option -g @uptime "$up_label" ';')
-fi
+[ -n "$up_cur" ] && cmds+=(set-option -gu @uptime ';')   # 09-22 起不再显示运行时长,清残留
 
 blink=$(( now / 2 % 2 ))
 [ "$any_busy" = 1 ] && [ "$blink_cur" != "$blink" ] && { if [ "$blink" = 1 ]; then d="●"; m="◆"; else d="○"; m="◇"; fi; cmds+=(set-option -g @blink "$blink" ';' set-option -g @busy_dot "$d" ';' set-option -g @busy_dia "$m" ';'); }   # tz：tmux 3.4 分支内嵌套 #{?} 解析失败，闪烁字符改由脚本算好
