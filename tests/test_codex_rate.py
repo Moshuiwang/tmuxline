@@ -28,6 +28,12 @@ chk(m._week_rate([(R - 3 * WEEK, 70, R - 2 * WEEK)], R, "1", str(R)), ("-", "-")
 h = [(WS + k * 3600, 30, R) for k in range(25)]
 chk(m._week_rate(h, WS + 24 * 3600, "25", str(R)), ("0", "-"), "倒退钳 0")
 chk(m._week_rate([], R, "5", str(R)), ("-", "-"), "空历史")
+# 重置时刻抖 1~2 秒(2026-09-24 线上现场):上周末值 97,本周 …-1/… 混着
+h = [(R - 11 * 3600 + k * 3600, 87 + k, R + k % 3 - 1) for k in range(11)] + [(R + k * 3600, k + 1, R2 - k % 2) for k in range(4)]
+chk(m._week_rate(h, R + 3 * 3600, "4", str(R2))[1], "97", "抖动:报 R2 上周终值取真上周")
+chk(m._week_rate(h, R + 3 * 3600, "4", str(R2 - 1))[1], "97", "抖动:报 R2-1 同样")
+h = [(WS + k * 3600, 10 + k, R - k % 2) for k in range(31)]
+chk(m._week_rate(h, WS + 30 * 3600, "40", str(R)), ("168", "-"), "抖动:同窗口燃速照算")
 chk(m._week_rate(h, R, "-", "-"), ("-", "-"), "无周窗口")
 m.WEEK_HISTORY_KEEP = 3
 for k in range(5):

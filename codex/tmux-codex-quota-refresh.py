@@ -42,6 +42,11 @@ FETCH_TIMEOUT = 8.0
 WEEK = 604800
 RATE24_WIN = 86400
 RATE24_MIN_SPAN = 21600
+# The API's reset timestamps jitter by 1-2 s (…046 / …047 / …048 for one
+# window).  Exact equality split one week into "this" and "previous" windows,
+# so the last-week final and the 24h burn flickered.  Resets within
+# RESET_TOL seconds are the same window (matches the renderer's SAME_RESET).
+RESET_TOL = 300
 WEEK_HISTORY_KEEP = 2500
 
 
@@ -345,9 +350,12 @@ def _week_rate(history, now: int, percent: str, reset: str) -> tuple[str, str]:
     r24, lf = "-", "-"
 
     # Last final: the adjacent previous window's latest sample.
-    prev_r = max((h[2] for h in history if h[2] < r), default=0)
+    def near(a: int, b: int) -> bool:
+        return abs(a - b) <= RESET_TOL
+
+    prev_r = max((h[2] for h in history if h[2] < r - RESET_TOL), default=0)
     if prev_r > 0 and r - prev_r <= WEEK + 86400:
-        lf = str(next(h[1] for h in reversed(history) if h[2] == prev_r))
+        lf = str(next(h[1] for h in reversed(history) if near(h[2], prev_r)))
     else:
         prev_r = 0
 
@@ -362,10 +370,10 @@ def _week_rate(history, now: int, percent: str, reset: str) -> tuple[str, str]:
     span = now - old[0]
     if span < RATE24_MIN_SPAN:
         return r24, lf
-    if old[2] == r:
+    if near(old[2], r):
         delta = p - old[1]
-    elif prev_r > 0 and old[2] == prev_r:
-        last_prev = max((h[1] for h in history if h[2] == prev_r and h[0] >= old[0]), default=old[1])
+    elif prev_r > 0 and near(old[2], prev_r):
+        last_prev = max((h[1] for h in history if near(h[2], prev_r) and h[0] >= old[0]), default=old[1])
         delta = last_prev - old[1] + p
     else:
         return r24, lf

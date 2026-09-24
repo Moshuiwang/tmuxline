@@ -1,5 +1,7 @@
 #!/bin/bash
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# 下面的算例按 24h 窗口写,测的是算法本身;线上默认 2026-09-22 起为 6h,这里显式固定回 24h
+RATE24_WIN=86400; RATE24_MIN_SPAN=21600
 . "$ROOT/claude/tmux-claude-usage-rate.sh"
 cd "$(mktemp -d)"; trap 'rm -rf "$PWD"' EXIT
 fail=0; chk() { if [ "$1" = "$2" ]; then echo "ok   $3 ($1)"; else echo "FAIL $3: got '$1' want '$2'"; fail=1; fi; }
@@ -25,4 +27,13 @@ series_rate h5 4 $((WEEKSTART+24*3600)) 12 $R; chk "$R24 $LF" "84 -" "Fable 列�
 # 6 用量倒退(接口抖动)→ 燃速钳为 0
 : > h6; for ((k=0;k<=24;k++)); do echo "$((WEEKSTART+k*3600)) 30 $R 0 $R" >> h6; done
 series_rate h6 2 $((WEEKSTART+24*3600)) 25 $R; chk "$R24 $LF" "0 -" "倒退钳 0"
+# 7 重置时刻抖 1 秒(2026-09-24 线上现场):上周样本 …-1/…/…+1 混着,末值 97;本周 …-1/… 混着 1..4。
+#   不管本次接口报的是 R2 还是 R2-1,上周终值都应是 97(以前报 R2 时把本周 …-1 的样本当上周,取成 3)
+: > h7; for ((k=0;k<=10;k++)); do echo "$((R-11*3600+k*3600)) $((87+k)) $((R+k%3-1)) 0 $R" >> h7; done
+for ((k=0;k<=3;k++)); do echo "$((R+k*3600)) $((k+1)) $((R2-k%2)) 0 $R2" >> h7; done
+series_rate h7 2 $((R+3*3600)) 4 $R2;       chk "$LF" "97" "抖动:本次报 R2 上周终值仍取真上周"
+series_rate h7 2 $((R+3*3600)) 4 $((R2-1)); chk "$LF" "97" "抖动:本次报 R2-1 同样"
+# 8 同一周内重置时刻来回抖,24h 燃速照算(以前最早样本的重置和本次不「相等」就放弃)
+: > h8; for ((k=0;k<=30;k++)); do echo "$((WEEKSTART+k*3600)) $((10+k)) $((R-k%2)) 0 $R" >> h8; done
+series_rate h8 2 $((WEEKSTART+30*3600)) 40 $R; chk "$R24 $LF" "168 -" "抖动:同窗口燃速照算、不误认上周"
 exit $fail

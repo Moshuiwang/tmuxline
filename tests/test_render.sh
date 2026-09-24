@@ -32,4 +32,12 @@ chk "$(run codex)" "7d 2% 周四 07:00" "codex 旧五列兼容"
 # 9 上限 999
 NOW=$((R-WEEK/2)); echo "$NOW 8 $((NOW+3600)) 30 $R 3 $R 5000 - - -" > $D/tmux-claude-usage-api.dat
 chk "$(run claude)" "7d 30% → 999% Fable 3% → 6% 周四 07:00" "上限 999"
+# 10 5h 历史里重置时刻抖 1 秒:半小时从 50 涨到 70,离重置 1h → 预测 70+20×2=110,应显示(以前抖动样本被丢,算不出、不显示)
+NOW=$((R-WEEK/2)); H5R=$((NOW+3600))
+echo "$NOW 70 $H5R 30 $R 3 $R - - - -" > $D/tmux-claude-usage-api.dat
+printf '%s 50 %s\n%s 70 %s\n' $((NOW-1800)) $((H5R-1)) $NOW $H5R > $D/tmux-claude-usage-5h.hist; rm -f $D/tmux-claude-usage-5h.state
+chk "$(run claude)" "5h 70% → 110% 1h0m 7d 30% → 60% Fable 3% → 6% 周四 07:00" "5h 抖动样本照算"
+# 11 重置时刻报成 …:59:59(抖了 1 秒)仍显示 07:00
+echo "$NOW - - 30 $((R-1)) - - - - - -" > $D/tmux-claude-usage-api.dat
+chk "$(run claude)" "7d 30% → 60% 周四 07:00" "重置时刻抖 1 秒仍显示整分"
 exit $fail

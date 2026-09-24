@@ -65,6 +65,8 @@ WD=(_ 一 二 三 四 五 六 日)
 
 if [ -n "$TMUX_CLAUDE_NOW" ]; then now=$TMUX_CLAUDE_NOW; else printf -v now '%(%s)T' -1; fi
 isnum() { [[ $1 =~ ^[0-9]+$ ]]; }
+# 2026-09-24:接口给的重置时刻会抖 1~2 秒,不能按字面相等认窗口(见 tmux-claude-usage-rate.sh);相差 ≤ SAME_RESET 算同一窗口
+same_win() { local d=$(( $1 - $2 )); [ "${d#-}" -le "$SAME_RESET" ]; }
 use_palette() {
   if [ "$1" = codex ]; then
     C_BG="$CODEX_BG"; C_G="$CODEX_FG"; C_Y="$CODEX_MID"; C_R="$CODEX_HIGH"; C_DIM="$CODEX_DIM"
@@ -114,7 +116,7 @@ fmt_left() { # $1=秒 → left="5d15h" / "3h0m" / "12m"
   else                      left="${m}m"; fi
 }
 fmt_reset() { # $1=epoch → reset_txt="周四 07:00"(北京时间;北京固定 UTC+8 无夏令时,日序号直接算)
-  local r=$1 hm wd label dn_now dn_r
+  local r=$(( ($1 + 30) / 60 * 60 )) hm wd label dn_now dn_r   # 四舍五入到整分:接口报 …199 时别显示成 06:59
   dn_now=$(( (now + 28800) / 86400 )); dn_r=$(( (r + 28800) / 86400 ))
   printf -v hm '%(%H:%M)T' "$r"; printf -v wd '%(%u)T' "$r"
   case $((dn_r - dn_now)) in
@@ -160,7 +162,7 @@ h5_pred() { # → h5pred(算不出为空)
   [ -r "$HIST" ] || return
   local -a T=() P=(); local t p r i n lt lp ot op dp
   while read -r t p r; do
-    [ "$r" = "$h5r" ] && isnum "$t" && isnum "$p" && { T+=("$t"); P+=("$p"); }
+    isnum "$t" && isnum "$p" && isnum "$r" && same_win "$r" "$h5r" && { T+=("$t"); P+=("$p"); }
   done < "$HIST"
   n=${#T[@]}; [ "$n" -ge 2 ] || return
   lt=${T[n-1]}; lp=${P[n-1]}
@@ -174,7 +176,7 @@ h5_state() { # → h5show;状态文件:shown 最近触发时刻 重置
   local shown=0 lastt=0 sreset=- trig=0 nshown nlast line
   [ -r "$STATE" ] && read -r shown lastt sreset < "$STATE"
   isnum "$shown" || shown=0; isnum "$lastt" || lastt=0
-  [ "$sreset" = "$h5r" ] || { shown=0; lastt=0; }   # 换了窗口,状态作废
+  { isnum "$sreset" && same_win "$sreset" "$h5r"; } || { shown=0; lastt=0; }   # 换了窗口,状态作废
   [ -n "$h5pred" ] && [ "$h5pred" -ge "$H5_SHOW_PRED" ] && trig=1
   [ "$h5p" -ge "$H5_SHOW_USED" ] && trig=1
   nshown=$shown; nlast=$lastt
