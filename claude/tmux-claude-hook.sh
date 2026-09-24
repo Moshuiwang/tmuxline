@@ -33,6 +33,9 @@ nested() {
   return 1
 }
 nested && exit 0
+# 2026-09-24:Stop 钩子传的是 done(回合结束),以前落不进下面任何分支被静默丢弃,
+# 只能等 Notification 的空闲提醒来改黄——那个提醒不保证触发,于是回合早结束了点还一直是青色「干活中」。
+[ "$state" = done ] && state=wait
 case "$state" in
   busy|wait)
     cur=$(tmux display-message -p -t "$TMUX_PANE" '#{@claude_state}' 2>/dev/null)
