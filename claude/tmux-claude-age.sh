@@ -14,9 +14,12 @@
 # 先 list-panes 再 ps:状态是活着的进程写的,后拍的 ps 快照一定能看到它,不会误清刚启动的会话。
 # (2026-09-15 至 09-22 曾在这里算 tmux server 运行时长写 @uptime;09-22 起徽标下面改显示整机 CPU / 内存,见 tmux-sysload.sh,
 #  这里只顺手清掉残留的 @uptime。)
+# 2026-09-24 起顺带看子代理标记 @claude_subs(见 tmux-claude-hook.sh):Claude 进程没了就连同标记一起清;
+# 有条目超过 SUB_STALE 秒没动静(子代理被强杀、SubagentStop 没触发)就调钩子脚本 sub-prune 清过期条目(加锁、重算标记)。
 # 测试钩子:TMUX_CLAUDE_TMUX 指定 tmux 命令(如 "tmux -L test"),TMUX_CLAUDE_NOW 固定「现在」。
 
 WAIT_WARN=600
+SUB_STALE=1800   # 与 tmux-claude-hook.sh 一致
 C_WARN="#f9e2af"
 T=${TMUX_CLAUDE_TMUX:-tmux}
 if [ -n "$TMUX_CLAUDE_NOW" ]; then now=$TMUX_CLAUDE_NOW; else printf -v now '%(%s)T' -1; fi
@@ -46,7 +49,7 @@ plan() { # $1=分屏 $2=前缀(claude|codex) $3=状态 $4=切换时刻 $5=现有
 # 用 | 分隔(空字段要保留,不能用空白做分隔符);文字里只有 #[fg=…] 和数字,不会含 |
 rows=()
 while IFS= read -r line; do rows+=("$line"); done \
-  < <($T list-panes -a -F '#{pane_id}|#{pane_pid}|#{@claude_state}|#{@claude_since}|#{@claude_age}|#{@codex_state}|#{@codex_since}|#{@codex_age}|#{@blink}|#{@uptime}' 2>/dev/null)
+  < <($T list-panes -a -F '#{pane_id}|#{pane_pid}|#{@claude_state}|#{@claude_since}|#{@claude_age}|#{@codex_state}|#{@codex_since}|#{@codex_age}|#{@blink}|#{@uptime}|#{@claude_subs}' 2>/dev/null)
 
 # 残留清理:哪些分屏的进程树里真有 claude / codex 在跑。只在有分屏挂着状态时才 ps。
 # comm 取自可执行文件名(claude 是原生二进制,codex 也是),最长 15 字符,用前缀匹配。
@@ -80,10 +83,18 @@ fmt_run() { local s=$1; if [ "$s" -ge 3600 ]; then printf '%dh%02dm' $((s/3600))
 
 any_busy=0; blink_cur=""; up_cur=""
 for line in "${rows[@]}"; do
-  IFS='|' read -r pane ppid cst csince cage kst ksince kage blink_cur up_cur <<< "$line"
-  if [ -n "$cst" ] && [ "$need_sweep" = 1 ] && [ -z "${live[$ppid/claude]}" ]; then
-    cmds+=(set-option -p -t "$pane" -u @claude_state ';'); cst=""
+  IFS='|' read -r pane ppid cst csince cage kst ksince kage blink_cur up_cur csubs <<< "$line"
+  if [ -n "$cst$csubs" ] && [ "$need_sweep" = 1 ] && [ -z "${live[$ppid/claude]}" ]; then
+    cmds+=(set-option -p -t "$pane" -u @claude_state ';' set-option -p -t "$pane" -u @claude_subs ';' set-option -p -t "$pane" -u @claude_sub_mark ';')
+    cst=""; csubs=""
   fi
+  for e in $csubs; do   # 有过期条目才调钩子清(少见);正常情况不起进程
+    ts=${e##*:}
+    if ! [[ $ts =~ ^[0-9]+$ ]] || [ $((now - ts)) -ge "$SUB_STALE" ]; then
+      TMUX_CLAUDE_TMUX="$T" TMUX_CLAUDE_NOW="$now" bash "$(dirname "$0")/tmux-claude-hook.sh" sub-prune "$pane" </dev/null >/dev/null 2>&1
+      break
+    fi
+  done
   if [ -n "$kst" ] && [ "$need_sweep" = 1 ] && [ -z "${live[$ppid/codex]}" ]; then
     cmds+=(set-option -p -t "$pane" -u @codex_state ';' set-option -p -t "$pane" -u @codex_pending ';' set-option -p -t "$pane" -u @codex_busy ';'); kst=""
   fi

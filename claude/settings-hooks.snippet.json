@@ -53,6 +53,28 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/tmux-claude-hook.sh sub-start",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/tmux-claude-hook.sh sub-stop",
+            "async": true
+          }
+        ]
+      }
     ]
   },
   "statusLine": {
