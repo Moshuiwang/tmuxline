@@ -24,7 +24,9 @@
 # 嵌套运行不算——Claude 在自己的分屏里用 Bash 起 `codex exec`(或 Codex 起另一个 codex),
 # 那个无头进程继承了同一个 TMUX_PANE,会把菱形画到宿主的分屏上。
 # 判定:沿父进程链往上找,第一个 codex 就是调本钩子的进程;它上面若还有 claude/codex,就是嵌套,静默退出。
-# 只读 /proc,不起子进程。与 ~/.claude/tmux-claude-hook.sh 里的 nested() 镜像。(app-server 执行时父链无 codex,不受影响)
+# 只读 /proc,不起子进程。与 ~/.claude/tmux-claude-hook.sh 里的 nested() 镜像。
+# 2026-09-26:app-server 可能由 `codex app-server daemon` 守护进程拉起(父链上两层 codex),曾把所有正常上报误判为嵌套、
+# 菱形全灭;现在一碰到 app-server 就判「非嵌套」。
 #
 # 取证开关:存在 ~/.codex/tmux-codex-hook.debug 时,把每次事件的字段(去掉 prompt / 回复正文)追加进去。
 
@@ -39,11 +41,14 @@ if [ -f "$HOME/.codex/tmux-codex-hook.debug" ] && command -v jq >/dev/null 2>&1;
 fi
 
 nested() {
-  local pid=$PPID comm line found=0
+  local pid=$PPID comm line found=0 args
   while [ "$pid" -gt 1 ] 2>/dev/null; do
     read -r comm < "/proc/$pid/comm" 2>/dev/null || return 1
     case $comm in
-      codex*)  [ "$found" = 1 ] && return 0; found=1 ;;
+      codex*)  # 后台 app-server 执行钩子不可能是嵌套;它上面还挂着 `codex app-server daemon`,不能再往上数
+               mapfile -d '' args < "/proc/$pid/cmdline" 2>/dev/null
+               [ "${args[1]:-}" = app-server ] && return 1
+               [ "$found" = 1 ] && return 0; found=1 ;;
       claude*) [ "$found" = 1 ] && return 0 ;;
     esac
     read -r line < "/proc/$pid/stat" 2>/dev/null || return 1
