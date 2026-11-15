@@ -1,8 +1,8 @@
 # tmuxline
 
-tz 与 biai 两台机器共用的 tmux 状态栏:Claude Code / Codex 会话状态点、状态持续时长、账号额度(5h / 7d / Fable / Codex)与到重置时的用量预测。
+tz 与 biai 两台机器共用的 tmux 状态栏:Claude Code / Codex / AGY (Antigravity CLI) 会话状态标志、状态持续时长、账号额度(5h / 7d / Fable / Codex / AGY)与到重置时的用量预测。
 
-仓库是这套文件的唯一正本;本机通过 `install.sh` 把实际位置(`~/.claude`、`~/.codex`、`~/.tmux.conf`)链接到仓库,改仓库即改现场,提交记录就是变更历史。
+仓库是这套文件的唯一正本;本机通过 `install.sh` 把实际位置(`~/.claude`、`~/.codex`、`~/.gemini`、`~/.tmux.conf`)链接到仓库,改仓库即改现场,提交记录就是变更历史。
 
 ## 目录
 
@@ -11,19 +11,22 @@ tz 与 biai 两台机器共用的 tmux 状态栏:Claude Code / Codex 会话状�
 | `tmux.conf` | `~/.tmux.conf` | tmux 主配置;末尾 `source-file` 引入下面两份状态栏片段 |
 | `claude/tmux-status-stage-section.conf` | `~/.claude/` | 两行状态栏样式(与 biai 一致的基线) |
 | `claude/tmux-status-extra.conf` | `~/.claude/` | 叠加规则:响应式收缩、圆点修正、运行时长 |
-| `claude/tmux-claude-usage.sh` | `~/.claude/` | 额度段渲染器(每 2 秒被状态栏调用;参数 `claude` / `codex`) |
+| `claude/tmux-claude-usage.sh` | `~/.claude/` | 额度段渲染器(每 2 秒被状态栏调用;参数 `claude` / `codex` / `agy` / `top`) |
 | `claude/tmux-claude-usage-poll.sh` | `~/.claude/` | Claude 额度轮询器:拉官方用量接口,写 `*-api.dat` 与 `*-7d.hist`,算 24h 燃速 |
 | `claude/tmux-claude-usage-rate.sh` | `~/.claude/` | 周燃速 / 上周终值计算函数(轮询器引用) |
-| `claude/tmux-usage-compact.sh` | `~/.claude/` | 窄屏用的紧凑额度段 `C95 F70 X47` |
-| `claude/tmux-claude-age.sh` | `~/.claude/` | 状态持续时长、闪烁开关、残留清理 |
+| `claude/tmux-usage-compact.sh` | `~/.claude/` | 窄屏用的紧凑额度段 `C95 A50 X47` |
+| `claude/tmux-claude-age.sh` | `~/.claude/` | 状态持续时长、闪烁开关(`●/○`、`◆/◇`、`▲/△`)、残留清理 |
 | `claude/tmux-sysload.sh` | `~/.claude/` | 会话徽标下面的整机 CPU / 内存占用 `C23% M61%`(宽屏;超 80% 黄、超 90% 红) |
 | `claude/tmux-claude-hook.sh` | `~/.claude/` | Claude Code hooks 调用,写分屏变量 `@claude_state` |
 | `claude/statusline-command.sh` | `~/.claude/` | Claude Code 自己的底部状态行(模型 / 思考深度 / 上下文占比 / 路径);显示的主机名可用 `~/.claude/statusline-host`(一行,不入库)固定,如 biai 写 `aws-ie-01` |
 | `claude/settings-hooks.snippet.json` | —(参考) | `~/.claude/settings.json` 里需要的 `hooks` 与 `statusLine` 段,手工合并 |
 | `codex/hooks.json` | `~/.codex/hooks.json` | Codex hooks,调用下面的钩子脚本 |
-| `codex/tmux-codex-hook.sh` | `~/.codex/` | 写分屏变量 `@codex_state` |
-| `codex/tmux-codex-quota-refresh.py` | `~/.codex/` | Codex 额度刷新:用 `~/.codex/auth.json` 的令牌拉官方用量接口(失败退回 app-server 代理),写缓存与 `*-7d.hist`,同算法算 24h 燃速;只用 Python 标准库 |
-| `tests/` | — | `tests/run.sh` 跑全部测试(bash 燃速函数 / 渲染器 / CPU 内存段 / codex 侧 python),不碰真实数据 |
+| `codex/tmux-codex-hook.sh` | `~/.codex/` | 写分屏变量 `@codex_state`(菱形 `◆/◇`) |
+| `codex/tmux-codex-quota-refresh.py` | `~/.codex/` | Codex 额度刷新:用 `~/.codex/auth.json` 的令牌拉官方用量接口(失败退回 app-server 代理),写缓存与 `*-7d.hist`,同算法算燃速;只用 Python 标准库 |
+| `agy/hooks.json` | `~/.gemini/config/hooks.json` | Antigravity CLI (agy) hooks,调用下面的钩子脚本 |
+| `agy/tmux-agy-hook.sh` | `~/.gemini/` | 写分屏变量 `@agy_state`(三角形 `▲/△`),满足 agy stdout JSON 契约 |
+| `agy/tmux-agy-quota-refresh.py` | `~/.gemini/` | AGY 额度刷新:无头调 `agy -p /usage --output-format json`(零 token 消耗),解析 `3p` / `Ar` / `Gm` 周桶与 `5h` 桶,写缓存与 `*-7d.hist`,同算法算燃速 |
+| `tests/` | — | `tests/run.sh` 跑全部测试(bash 燃速函数 / 渲染器 / CPU 内存段 / codex & agy 侧 python),不碰真实数据 |
 
 运行期数据(`*.dat` / `*.hist` / `*.state` / `*.last` / `*.lock`)与每台机器自己的 `~/.claude/statusline-host` 留在原位,不入库。
 
@@ -43,9 +46,9 @@ git clone https://github.com/Moshuiwang/tmuxline ~/project/tmuxline
 
 `7d 21% → 110%` 箭头后是「到重置时会用到多少」,取两者较高:
 1. **本周平均节奏**:已用 ÷ 窗口已过比例;窗口已过不足 5% 时改用上周终值当节奏(周初不再空白);
-2. **最近 24h 燃速外推**:跨周重置也连续。
+2. **最近燃速外推**:跨周重置也连续。
 
-取较高者的用意:停一天不会塌成「没风险」(回落到周平均),猛干一天当天就报出来。改完当天 24h 燃速要攒 6 小时历史才出数,「上周终值」要等下一次周重置。
+取较高者的用意:停一天不会塌成「没风险」(回落到周平均),猛干一天当天就报出来。改完当天燃速要攒够最小跨度历史才出数,「上周终值」要等下一次周重置。
 
 ## 修改流程
 

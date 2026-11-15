@@ -1,10 +1,10 @@
 #!/bin/bash
-# 渲染器测试:用 TMUX_CLAUDE_DIR / TMUX_CODEX_STATE_DIR / TMUX_CLAUDE_NOW 钩子,只看去掉颜色后的文字
+# 渲染器测试:用 TMUX_CLAUDE_DIR / TMUX_CODEX_STATE_DIR / TMUX_AGY_STATE_DIR / TMUX_CLAUDE_NOW 钩子,只看去掉颜色后的文字
 ROOT=$(cd "$(dirname "$0")/.." && pwd); W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
-fail=0; D=$W/cd; C=$W/cx; mkdir -p "$D" "$C"
-run() { TMUX_CLAUDE_DIR=$D TMUX_CODEX_STATE_DIR=$C TMUX_CLAUDE_NOW=$NOW bash "$ROOT/claude/tmux-claude-usage.sh" "$1" | sed 's/#\[[^]]*\]//g; s/  */ /g; s/^ *//; s/ *$//'; }
+fail=0; D=$W/cd; C=$W/cx; A=$W/ag; mkdir -p "$D" "$C" "$A"
+run() { TMUX_CLAUDE_DIR=$D TMUX_CODEX_STATE_DIR=$C TMUX_AGY_STATE_DIR=$A TMUX_CLAUDE_NOW=$NOW bash "$ROOT/claude/tmux-claude-usage.sh" "$1" | sed 's/#\[[^]]*\]//g; s/  */ /g; s/^ *//; s/ *$//'; }
 chk() { if [ "$1" = "$2" ]; then echo "ok   $3 → $1"; else echo "FAIL $3: got '$1' want '$2'"; fail=1; fi; }
-WEEK=604800; R=1790204400   # 周四 07:00 北京
+WEEK=604800; R=1790233200   # 周四 07:00 UTC
 # 1 周初 2 小时(<5%),无燃速无上周 → 不显示预测(与改前一致)
 NOW=$((R-WEEK+7200)); echo "$NOW 8 $((NOW+3600)) 4 $R 3 $R - - - -" > $D/tmux-claude-usage-api.dat
 chk "$(run claude)" "7d 4% Fable 3% 周四 07:00" "周初无数据不预测"
@@ -37,7 +37,18 @@ NOW=$((R-WEEK/2)); H5R=$((NOW+3600))
 echo "$NOW 70 $H5R 30 $R 3 $R - - - -" > $D/tmux-claude-usage-api.dat
 printf '%s 50 %s\n%s 70 %s\n' $((NOW-1800)) $((H5R-1)) $NOW $H5R > $D/tmux-claude-usage-5h.hist; rm -f $D/tmux-claude-usage-5h.state
 chk "$(run claude)" "5h 70% → 110% 1h0m 7d 30% → 60% Fable 3% → 6% 周四 07:00" "5h 抖动样本照算"
-# 11 重置时刻报成 …:59:59(抖了 1 秒)仍显示 07:00
+# 11 重置时刻抖 1 秒仍显示 07:00
 echo "$NOW - - 30 $((R-1)) - - - - - -" > $D/tmux-claude-usage-api.dat
 chk "$(run claude)" "7d 30% → 60% 周四 07:00" "重置时刻抖 1 秒仍显示整分"
+# 12 AGY: 5h 100% 触发显示,3p 与 Ar 重置相差 ≤5 分钟合并显示一次,Gm=0%(<5%)默认隐藏
+NOW=$((R-WEEK/2)); H5R=$((NOW+3600))
+echo "$NOW 100 $H5R 50 $R 18 $((R+20)) 0 $((R+3600)) - - - - - -" > $A/tmux-agy-usage.dat
+chk "$(run agy)" "5h 100% 1h0m 3p 50% Ar 18% 周四 07:00" "AGY: 5h 满额 + 3p/Ar 合并重置 + Gm<5% 隐藏(不显示预测)"
+# 13 AGY: Gm>=5% 时显示,且与 Ar 重置相差 >5 分钟时各自带重置时刻;5h<80% 隐藏
+rm -f $A/tmux-agy-usage-5h.state
+echo "$NOW 10 $H5R 50 $R 18 $R 12 $((R+3600)) - - - - - -" > $A/tmux-agy-usage.dat
+chk "$(run agy)" "3p 50% Ar 18% 周四 07:00 Gm 12% 周四 08:00" "AGY: 5h 低占用隐藏 + Gm>=5% 独立重置显示(不显示预测)"
+# 14 top 模式拼接 AGY + Codex
+echo "$NOW - - 40 $R - -" > $C/tmux-codex-usage.dat
+chk "$(run top)" "3p 50% Ar 18% 周四 07:00 Gm 12% 周四 08:00 7d 40% → 80% 周四 07:00" "top: 拼接 AGY 与 Codex"
 exit $fail

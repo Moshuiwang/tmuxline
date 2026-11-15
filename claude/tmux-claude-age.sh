@@ -1,16 +1,16 @@
 #!/bin/bash
 # 「状态持续多久」计时器(2026-09-11)。由 ~/.tmux.conf 的 status-right 以 #() 每 2 秒调用一次,自身不输出任何东西;
-# 把每个分屏的 @claude_since / @codex_since(状态切换时刻,由两个钩子在状态真正变化时写入)换算成文字,
-# 写到 @claude_age / @codex_age,窗口标签在状态点后面显示:
-#   青点 = 这一阵跑了多久   黄点 = 等你等了多久(回合完成/等授权)
+# 把每个分屏的 @claude_since / @codex_since / @agy_since(状态切换时刻,由钩子在状态真正变化时写入)换算成文字,
+# 写到 @claude_age / @codex_age / @agy_age,窗口标签在状态点后面显示:
+#   青色(●/◆/▲) = 这一阵跑了多久   黄色(●/◆/▲) = 等你等了多久(回合完成/等授权)
 # 规则:分钟粒度(4m / 2h),不足 1 分钟显示占位 0m(宽度不变,标签不跳);黄点(等你)超过 WAIT_WARN 秒数字变黄(文字自带样式,
 # 覆盖标签格式里的默认灰色)。只在文字变化时写回(每个分屏每分钟最多一次),一次 tmux 调用批量写。
 # 兼容:改造前已开着的会话没有切换时刻,首次看到时以当时为起点补一个;状态已清而残留的时刻/文字一并清掉。
-# 另外每次翻一下全局开关 @blink(按 2 秒时槽取 0/1),窗口标签让干活中的青点/青菱形在实心与空心之间交替——
+# 另外每次翻一下全局开关 @blink(按 2 秒时槽取 0/1),窗口标签让干活中的青点/青菱形/青三角在实心与空心之间交替——
 # 「闪 = 正在工作,不闪 = 没在工作」;节奏就是状态栏刷新间隔(2 秒),不额外起进程。
-# 只在有青点要闪、且值真的要翻时才写 @blink:tmux 每次 set-option 都会整屏重画一遍客户端,没事别写。
-# 2026-09-13 起顺带清理残留标记:分屏里已经没有 claude / codex 进程(被 kill、崩溃、无头 `claude -p` 跑完)却还挂着状态,
-# 就把它清掉——这些情况 SessionEnd 钩子不会触发。每轮 ps 一次(约 10ms),只对挂着状态的分屏查其进程树。
+# 只在有青标要闪、且值真的要翻时才写 @blink:tmux 每次 set-option 都会整屏重画一遍客户端,没事别写。
+# 2026-09-13 起顺带清理残留标记:分屏里已经没有 claude / codex / agy 进程(被 kill、崩溃、无头 `-p` 跑完)却还挂着状态,
+# 就把它清掉——这些情况退出钩子不会触发。每轮 ps 一次(约 10ms),只对挂着状态的分屏查其进程树。
 # 先 list-panes 再 ps:状态是活着的进程写的,后拍的 ps 快照一定能看到它,不会误清刚启动的会话。
 # (2026-09-15 至 09-22 曾在这里算 tmux server 运行时长写 @uptime;09-22 起徽标下面改显示整机 CPU / 内存,见 tmux-sysload.sh,
 #  这里只顺手清掉残留的 @uptime。)
@@ -25,7 +25,7 @@ T=${TMUX_CLAUDE_TMUX:-tmux}
 if [ -n "$TMUX_CLAUDE_NOW" ]; then now=$TMUX_CLAUDE_NOW; else printf -v now '%(%s)T' -1; fi
 
 cmds=()
-plan() { # $1=分屏 $2=前缀(claude|codex) $3=状态 $4=切换时刻 $5=现有文字
+plan() { # $1=分屏 $2=前缀(claude|codex|agy) $3=状态 $4=切换时刻 $5=现有文字
   local pane=$1 pfx=$2 st=$3 since=$4 cur=$5 age label
   if [ -z "$st" ]; then   # 状态已清:残留一并清掉
     [ -n "$since" ] && cmds+=(set-option -p -t "$pane" -u "@${pfx}_since" ';')
@@ -49,19 +49,17 @@ plan() { # $1=分屏 $2=前缀(claude|codex) $3=状态 $4=切换时刻 $5=现有
 # 用 | 分隔(空字段要保留,不能用空白做分隔符);文字里只有 #[fg=…] 和数字,不会含 |
 rows=()
 while IFS= read -r line; do rows+=("$line"); done \
-  < <($T list-panes -a -F '#{pane_id}|#{pane_pid}|#{@claude_state}|#{@claude_since}|#{@claude_age}|#{@codex_state}|#{@codex_since}|#{@codex_age}|#{@blink}|#{@uptime}|#{@claude_subs}' 2>/dev/null)
+  < <($T list-panes -a -F '#{pane_id}|#{pane_pid}|#{@claude_state}|#{@claude_since}|#{@claude_age}|#{@codex_state}|#{@codex_since}|#{@codex_age}|#{@blink}|#{@uptime}|#{@claude_subs}|#{@agy_state}|#{@agy_since}|#{@agy_age}' 2>/dev/null)
 
-# 残留清理:哪些分屏的进程树里真有 claude / codex 在跑。只在有分屏挂着状态时才 ps。
-# comm 取自可执行文件名(claude 是原生二进制,codex 也是),最长 15 字符,用前缀匹配。
+# 残留清理:哪些分屏的进程树里真有 claude / codex / agy 在跑。
+# comm 取自可执行文件名(claude / codex / agy 都是原生二进制),最长 15 字符,用前缀匹配。
 declare -A live ppid_of
-need_sweep=0
-for line in "${rows[@]}"; do IFS='|' read -r _ _ cst _ _ kst _ _ _ _ <<< "$line"; [ -n "$cst$kst" ] && { need_sweep=1; break; }; done
 need_sweep=1   # tz 2026-09-17：嵌套 codex（Claude 派的 codex exec）检测需要进程树，每轮都扫
 if [ "$need_sweep" = 1 ]; then
   agents=()
   while read -r pid pp comm; do
     ppid_of[$pid]=$pp
-    case $comm in claude*) agents+=("$pid claude") ;; codex*) agents+=("$pid codex") ;; esac
+    case $comm in claude*) agents+=("$pid claude") ;; codex*) agents+=("$pid codex") ;; agy*) agents+=("$pid agy") ;; esac
   done < <(ps -eo pid=,ppid=,comm= 2>/dev/null)
   for a in "${agents[@]}"; do
     pid=${a%% *}; kind=${a##* }
@@ -71,10 +69,10 @@ if [ "$need_sweep" = 1 ]; then
   done
 fi
 
-# tz 追加(2026-09-17):没跑 claude / codex 的分屏,若 shell 下有子进程在跑(如独占 full 门禁),
+# tz 追加(2026-09-17):没跑 claude / codex / agy 的分屏,若 shell 下有子进程在跑(如独占 full 门禁),
 # 把最老那个子进程的运行时长写进 @run_age(分钟粒度),标签第 2 行显示 ▶ 时长;没有子进程则清掉。
-# 2026-09-18 修正:「没跑 claude / codex」按进程树判断,不只看状态——否则 hooks 还没写状态的分屏(刚启动、resume 后
-# 没提交、hooks 未批准)会把 claude / codex 进程自己的存活时间当「▶ 运行时长」显示出来,误导。
+# 2026-09-18 修正:「没跑 claude / codex / agy」按进程树判断,不只看状态——否则 hooks 还没写状态的分屏(刚启动、resume 后
+# 没提交、hooks 未批准)会把 agent 进程自己的存活时间当「▶ 运行时长」显示出来,误导。
 declare -A run_child_et
 while read -r pid pp et; do
   cur=${run_child_et[$pp]:-0}; [ "$et" -gt "$cur" ] 2>/dev/null && run_child_et[$pp]=$et
@@ -83,7 +81,7 @@ fmt_run() { local s=$1; if [ "$s" -ge 3600 ]; then printf '%dh%02dm' $((s/3600))
 
 any_busy=0; blink_cur=""; up_cur=""
 for line in "${rows[@]}"; do
-  IFS='|' read -r pane ppid cst csince cage kst ksince kage blink_cur up_cur csubs <<< "$line"
+  IFS='|' read -r pane ppid cst csince cage kst ksince kage blink_cur up_cur csubs ast asince aage <<< "$line"
   if [ -n "$cst$csubs" ] && [ "$need_sweep" = 1 ] && [ -z "${live[$ppid/claude]}" ]; then
     cmds+=(set-option -p -t "$pane" -u @claude_state ';' set-option -p -t "$pane" -u @claude_subs ';' set-option -p -t "$pane" -u @claude_sub_mark ';')
     cst=""; csubs=""
@@ -98,26 +96,30 @@ for line in "${rows[@]}"; do
   if [ -n "$kst" ] && [ "$need_sweep" = 1 ] && [ -z "${live[$ppid/codex]}" ]; then
     cmds+=(set-option -p -t "$pane" -u @codex_state ';' set-option -p -t "$pane" -u @codex_pending ';' set-option -p -t "$pane" -u @codex_busy ';'); kst=""
   fi
+  if [ -n "$ast" ] && [ "$need_sweep" = 1 ] && [ -z "${live[$ppid/agy]}" ]; then
+    cmds+=(set-option -p -t "$pane" -u @agy_state ';'); ast=""
+  fi
   plan "$pane" claude "$cst" "$csince" "$cage"
   plan "$pane" codex  "$kst" "$ksince" "$kage"
+  plan "$pane" agy    "$ast" "$asince" "$aage"
   # tz 2026-09-17：分屏进程树里同时有 claude 与 codex（= Claude 派出的 codex exec 子进程）→ @codex_sub=1，标签画灰色小菱形；否则清掉
   if [ -n "${live[$ppid/claude]}" ] && [ -n "${live[$ppid/codex]}" ] && [ -z "$kst" ]; then
     cmds+=(set-option -p -t "$pane" @codex_sub 1 ';')
   else
     cmds+=(set-option -p -t "$pane" -u @codex_sub ';')
   fi
-  if [ -z "$cst$kst" ] && [ -z "${live[$ppid/claude]:-}${live[$ppid/codex]:-}" ] && [ -n "${run_child_et[$ppid]:-}" ]; then
+  if [ -z "$cst$kst$ast" ] && [ -z "${live[$ppid/claude]:-}${live[$ppid/codex]:-}${live[$ppid/agy]:-}" ] && [ -n "${run_child_et[$ppid]:-}" ]; then
     cmds+=(set-option -p -t "$pane" @run_age "$(fmt_run "${run_child_et[$ppid]}")" ';')
   else
     cmds+=(set-option -p -t "$pane" -u @run_age ';')
   fi
-  { [ "$cst" = busy ] || [ "$kst" = busy ]; } && any_busy=1
+  { [ "$cst" = busy ] || [ "$kst" = busy ] || [ "$ast" = busy ]; } && any_busy=1
 done
 
 [ -n "$up_cur" ] && cmds+=(set-option -gu @uptime ';')   # 09-22 起不再显示运行时长,清残留
 
 blink=$(( now / 2 % 2 ))
-[ "$any_busy" = 1 ] && [ "$blink_cur" != "$blink" ] && { if [ "$blink" = 1 ]; then d="●"; m="◆"; else d="○"; m="◇"; fi; cmds+=(set-option -g @blink "$blink" ';' set-option -g @busy_dot "$d" ';' set-option -g @busy_dia "$m" ';'); }   # tz：tmux 3.4 分支内嵌套 #{?} 解析失败，闪烁字符改由脚本算好
+[ "$any_busy" = 1 ] && [ "$blink_cur" != "$blink" ] && { if [ "$blink" = 1 ]; then d="●"; m="◆"; tr="▲"; else d="○"; m="◇"; tr="△"; fi; cmds+=(set-option -g @blink "$blink" ';' set-option -g @busy_dot "$d" ';' set-option -g @busy_dia "$m" ';' set-option -g @busy_tri "$tr" ';'); }   # tz：tmux 3.4 分支内嵌套 #{?} 解析失败，闪烁字符改由脚本算好
 [ ${#cmds[@]} -gt 0 ] || exit 0
 unset 'cmds[-1]'   # 去掉末尾多余的 ';'
 $T "${cmds[@]}" >/dev/null 2>&1

@@ -24,6 +24,9 @@ MAP=(
   "codex/tmux-codex-hook.sh             $HOME/.codex/tmux-codex-hook.sh"
   "codex/tmux-codex-quota-refresh.py    $HOME/.codex/tmux-codex-quota-refresh.py"
   "codex/hooks.json                     $HOME/.codex/hooks.json"
+  "agy/tmux-agy-hook.sh                 $HOME/.gemini/tmux-agy-hook.sh"
+  "agy/tmux-agy-quota-refresh.py        $HOME/.gemini/tmux-agy-quota-refresh.py"
+  "agy/hooks.json                       $HOME/.gemini/config/hooks.json"
   "tmux.conf                            $HOME/.tmux.conf"
 )
 

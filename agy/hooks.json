@@ -1,0 +1,18 @@
+{
+  "tmux-agy-state": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "bash ~/.gemini/tmux-agy-hook.sh busy",
+        "timeout": 3
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "bash ~/.gemini/tmux-agy-hook.sh wait",
+        "timeout": 3
+      }
+    ]
+  }
+}
