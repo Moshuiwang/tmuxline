@@ -68,6 +68,7 @@ RATE_WIN=1800      # 5h 燃速取最近 30 分钟
 RATE_MIN_SPAN=600  # 至少跨 10 分钟的两个采样才算速度
 H5_SHOW_PRED=90; H5_SHOW_USED=80; H5_KEEP_PRED=80; H5_KEEP_SECS=900
 AGY_GM_SHOW=5      # AGY 普通 Gemini 周桶已用 ≥ 5% 才常显(省横向空间)
+AGY_RESET_SHOW=80  # AGY 周桶已用 ≥ 80% 才显示重置时刻;0% 的桶整个不显示
 
 CLAUDE_BG="#452c20"; CLAUDE_FG="#a6c98b"; CLAUDE_DIM="#b69c89"; CLAUDE_MID="#e4b35e"; CLAUDE_HIGH="#df8896"
 CODEX_BG="#293c4f"; CODEX_FG="#a6c98b"; CODEX_DIM="#9eb6cc"; CODEX_MID="#e4b35e"; CODEX_HIGH="#df8da7"
@@ -279,16 +280,15 @@ render_agy() { # 进入时 out 为空,只往里写 AGY 段
     x=${!v}; { isnum "$x" && [ "$x" -gt "$now" ]; } || x=-; printf -v "$v" '%s' "$x"
   done
 
+  # 2026-11-20 起:周桶 0% 整个不显示;重置时刻只在已用 ≥ AGY_RESET_SHOW 时出现(省横向空间)
   local p3ok=0 arok=0 gmok=0
-  [ "$ag_p3p" != - ] && [ "$ag_p3r" != - ] && p3ok=1
-  [ "$ag_arp" != - ] && [ "$ag_arr" != - ] && arok=1
-  if [ "$ag_gmp" != - ] && [ "$ag_gmr" != - ]; then
+  [ "$ag_p3p" != - ] && [ "$ag_p3r" != - ] && [ "$ag_p3p" -gt 0 ] && p3ok=1
+  [ "$ag_arp" != - ] && [ "$ag_arr" != - ] && [ "$ag_arp" -gt 0 ] && arok=1
+  if [ "$ag_gmp" != - ] && [ "$ag_gmr" != - ] && [ "$ag_gmp" -gt 0 ]; then
     if [ "$ag_gmp" -ge "$AGY_GM_SHOW" ] || { [ "$p3ok" = 0 ] && [ "$arok" = 0 ]; }; then
       gmok=1
     fi
   fi
-  [ "$ag_h5p" != - ] || [ "$p3ok" = 1 ] || [ "$arok" = 1 ] || [ "$gmok" = 1 ] || return
-
   use_palette agy
 
   # AGY 不显示 `→ 预测%` 以节省横向空间
@@ -307,9 +307,13 @@ render_agy() { # 进入时 out 为空,只往里写 AGY 段
 
   local wn=${#WL[@]} i show_r
   for ((i = 0; i < wn; i++)); do
-    show_r=1
-    if [ $((i + 1)) -lt "$wn" ] && same_win "${WR[i]}" "${WR[i+1]}"; then
-      show_r=0
+    show_r=0
+    if [ "${WP[i]}" -ge "$AGY_RESET_SHOW" ]; then
+      show_r=1
+      # 下一个桶也要显示重置且同一窗口:合并,只在后一个后面显示一次
+      if [ $((i + 1)) -lt "$wn" ] && [ "${WP[i+1]}" -ge "$AGY_RESET_SHOW" ] && same_win "${WR[i]}" "${WR[i+1]}"; then
+        show_r=0
+      fi
     fi
     pct_col "${WP[i]}"; out+="#[fg=${col},bg=${C_BG}] ${WL[i]} ${WP[i]}%"
     if [ "$show_r" = 1 ]; then fmt_reset "${WR[i]}"; out+="#[fg=${C_DIM}] ${reset_txt} "; else out+=" "; fi

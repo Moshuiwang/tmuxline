@@ -8,8 +8,9 @@ if [ -r "$a" ] && read -r t _ _ d7 _ fb _ < "$a" && [ $((now - t)) -lt 1800 ]; t
 elif [ -r "$b" ] && read -r t _ _ d7 _ < "$b"; then c7=$d7; fi
 [ -r "$c" ] && read -r _ _ _ x _ < "$c"
 if [ -r "$g" ] && read -r gt _ _ gp3 _ gar _ < "$g" && [ $((now - gt)) -lt 86400 ]; then
-  if [ -n "$gp3" ] && [ "$gp3" != "-" ]; then ag=$gp3
-  elif [ -n "$gar" ] && [ "$gar" != "-" ]; then ag=$gar; fi
+  # 0% 不显示:3p 为 0 / 缺省时取 Argon,也为 0 就不出 A 段
+  if [[ $gp3 =~ ^[0-9]+$ ]] && [ "$gp3" -gt 0 ]; then ag=$gp3
+  elif [[ $gar =~ ^[0-9]+$ ]] && [ "$gar" -gt 0 ]; then ag=$gar; fi
 fi
 seg=""
 [ -n "$c7" ] && seg+=" C${c7}"

@@ -40,15 +40,23 @@ chk "$(run claude)" "5h 70% → 110% 1h0m 7d 30% → 60% Fable 3% → 6% 周四 
 # 11 重置时刻抖 1 秒仍显示 07:00
 echo "$NOW - - 30 $((R-1)) - - - - - -" > $D/tmux-claude-usage-api.dat
 chk "$(run claude)" "7d 30% → 60% 周四 07:00" "重置时刻抖 1 秒仍显示整分"
-# 12 AGY: 5h 100% 触发显示,3p 与 Ar 重置相差 ≤5 分钟合并显示一次,Gm=0%(<5%)默认隐藏
+# 12 AGY: 5h 100% 触发显示;3p/Ar 都 ≥80% 且重置相差 ≤5 分钟 → 合并显示一次;Gm=0% 隐藏
 NOW=$((R-WEEK/2)); H5R=$((NOW+3600))
-echo "$NOW 100 $H5R 50 $R 18 $((R+20)) 0 $((R+3600)) - - - - - -" > $A/tmux-agy-usage.dat
-chk "$(run agy)" "5h 100% 1h0m 3p 50% Ar 18% 周四 07:00" "AGY: 5h 满额 + 3p/Ar 合并重置 + Gm<5% 隐藏(不显示预测)"
-# 13 AGY: Gm>=5% 时显示,且与 Ar 重置相差 >5 分钟时各自带重置时刻;5h<80% 隐藏
+echo "$NOW 100 $H5R 85 $R 90 $((R+20)) 0 $((R+3600)) - - - - - -" > $A/tmux-agy-usage.dat
+chk "$(run agy)" "5h 100% 1h0m 3p 85% Ar 90% 周四 07:00" "AGY: 5h 满额 + 3p/Ar ≥80% 合并重置 + Gm 0% 隐藏"
+# 13 AGY: <80% 不带重置时刻;Gm>=5% 显示;5h<80% 隐藏
 rm -f $A/tmux-agy-usage-5h.state
 echo "$NOW 10 $H5R 50 $R 18 $R 12 $((R+3600)) - - - - - -" > $A/tmux-agy-usage.dat
-chk "$(run agy)" "3p 50% Ar 18% 周四 07:00 Gm 12% 周四 08:00" "AGY: 5h 低占用隐藏 + Gm>=5% 独立重置显示(不显示预测)"
+chk "$(run agy)" "3p 50% Ar 18% Gm 12%" "AGY: <80% 不显示重置时刻"
 # 14 top 模式拼接 AGY + Codex
 echo "$NOW - - 40 $R - -" > $C/tmux-codex-usage.dat
-chk "$(run top)" "3p 50% Ar 18% 周四 07:00 Gm 12% 周四 08:00 7d 40% → 80% 周四 07:00" "top: 拼接 AGY 与 Codex"
+chk "$(run top)" "3p 50% Ar 18% Gm 12% 7d 40% → 80% 周四 07:00" "top: 拼接 AGY 与 Codex"
+# 15 AGY: 3p 0% 整个隐藏;只有 ≥80% 的 Ar 带重置时刻(与下一个 <80% 的 Gm 同窗口也不合并)
+echo "$NOW 10 $H5R 0 $R 80 $R 12 $R - - - - - -" > $A/tmux-agy-usage.dat
+chk "$(run agy)" "Ar 80% 周四 07:00 Gm 12%" "AGY: 0% 隐藏 + 仅 ≥80% 显示重置"
+# 16 AGY: 全部 0% 且 5h 不触发 → 整段为空
+echo "$NOW 0 $H5R 0 $R 0 $R 0 $R - - - - - -" > $A/tmux-agy-usage.dat
+chk "$(run agy)" "" "AGY: 全 0% 整段不出现"
+# 17 top 模式 AGY 为空时只剩 Codex,不留多余分隔
+chk "$(run top)" "7d 40% → 80% 周四 07:00" "top: AGY 空时只剩 Codex"
 exit $fail
