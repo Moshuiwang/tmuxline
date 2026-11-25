@@ -8,7 +8,7 @@ tz 与 biai 两台机器共用的 tmux 状态栏:Claude Code / Codex / AGY (Anti
 
 | 仓库路径 | 安装位置 | 作用 |
 | --- | --- | --- |
-| `tmux.conf` | `~/.tmux.conf` | tmux 主配置;末尾 `source-file` 引入下面两份状态栏片段 |
+| `tmux.conf` | `~/.tmux.conf` | tmux 主配置;末尾 `source-file` 引入下面两份状态栏片段。新会话自动改名用的名字读 `~/.claude/tmux-session-name`(一行,不入库),缺省 `TZ-server`,如 cote 写 `Cote` |
 | `claude/tmux-status-stage-section.conf` | `~/.claude/` | 两行状态栏样式(与 biai 一致的基线) |
 | `claude/tmux-status-extra.conf` | `~/.claude/` | 叠加规则:响应式收缩、圆点修正、运行时长 |
 | `claude/tmux-claude-usage.sh` | `~/.claude/` | 额度段渲染器(每 2 秒被状态栏调用;参数 `claude` / `codex` / `agy` / `top`) |
@@ -28,7 +28,7 @@ tz 与 biai 两台机器共用的 tmux 状态栏:Claude Code / Codex / AGY (Anti
 | `agy/tmux-agy-quota-refresh.py` | `~/.gemini/` | AGY 额度刷新:无头调 `agy -p /usage --output-format json`(零 token 消耗),解析 `3p` / `Ar` / `Gm` 周桶与 `5h` 桶,写缓存与 `*-7d.hist`,同算法算燃速 |
 | `tests/` | — | `tests/run.sh` 跑全部测试(bash 燃速函数 / 渲染器 / CPU 内存段 / codex & agy 侧 python),不碰真实数据 |
 
-运行期数据(`*.dat` / `*.hist` / `*.state` / `*.last` / `*.lock`)与每台机器自己的 `~/.claude/statusline-host` 留在原位,不入库。
+运行期数据(`*.dat` / `*.hist` / `*.state` / `*.last` / `*.lock`)与每台机器自己的 `~/.claude/statusline-host`、`~/.claude/tmux-session-name` 留在原位,不入库。
 
 ## 安装
 
